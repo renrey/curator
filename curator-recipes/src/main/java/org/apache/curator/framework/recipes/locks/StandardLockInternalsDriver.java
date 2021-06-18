@@ -29,30 +29,63 @@ public class StandardLockInternalsDriver implements LockInternalsDriver
 {
     static private final Logger log = LoggerFactory.getLogger(StandardLockInternalsDriver.class);
 
+    /**
+     * 判断是否获取到锁
+     * @param client
+     * @param children 父目录（lock目录）下所有子节点，按升序排序
+     * @param sequenceNodeName 当前节点名称（无父路径）
+     * @param maxLeases zk中最大需要释放（持有锁）资源数量，可以看成可以获取lock的最大下标范围
+     * @return
+     * @throws Exception
+     */
     @Override
     public PredicateResults getsTheLock(CuratorFramework client, List<String> children, String sequenceNodeName, int maxLeases) throws Exception
     {
+        // 当前节点在现有lock节点中的位置
         int             ourIndex = children.indexOf(sequenceNodeName);
+        // 是否存在zk中，健壮性校验
         validateOurIndex(sequenceNodeName, ourIndex);
-
+        /**
+         * 是否获取到lock
+         * 互斥锁，maxLeases =1,只需一个资源， 需要ourIndex<1, 就是第一个节点
+         */
         boolean         getsTheLock = ourIndex < maxLeases;
+        /**
+         * 是否需要添加watcher
+         * 没获取锁成功，需要监听上一个节点
+         */
         String          pathToWatch = getsTheLock ? null : children.get(ourIndex - maxLeases);
 
         return new PredicateResults(pathToWatch, getsTheLock);
     }
 
+    /**
+     * 实际在zk中创建lock节点
+     * @param client
+     * @param path
+     * @param lockNodeBytes
+     * @return
+     * @throws Exception
+     */
     @Override
     public String createsTheLock(CuratorFramework client, String path, byte[] lockNodeBytes) throws Exception
     {
         String ourPath;
+        /**
+         * 区别就是创建znode，放不放数据
+         */
         if ( lockNodeBytes != null )
         {
             ourPath = client.create().creatingParentContainersIfNeeded().withProtection().withMode(CreateMode.EPHEMERAL_SEQUENTIAL).forPath(path, lockNodeBytes);
         }
+        // 一开始是null,进入这里
         else
         {
+            // 就是创建znode，类型为EPHEMERAL_SEQUENTIAL临时顺序
+            // 例如/lock/zz/lock-0000，类型是临时顺序
             ourPath = client.create().creatingParentContainersIfNeeded().withProtection().withMode(CreateMode.EPHEMERAL_SEQUENTIAL).forPath(path);
         }
+        // 返回实际创建的路径，路径带有顺序序号
         return ourPath;
     }
 

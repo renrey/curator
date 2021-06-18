@@ -126,8 +126,11 @@ public class InterProcessSemaphoreV2
     {
         this.client = client.newWatcherRemoveCuratorFramework();
         path = PathUtils.validatePath(path);
+        // InterProcessMutex锁, 路径为path/locks, 如/semaphore1/locks
         lock = new InterProcessMutex(client, ZKPaths.makePath(path, LOCK_PARENT));
+        // 需要的资源数量
         this.maxLeases = (count != null) ? count.getCount() : maxLeases;
+        // leases的路径：路径为path/leases,如/semaphore1/leases
         leasesPath = ZKPaths.makePath(path, LEASE_PARENT);
 
         if ( count != null )
@@ -256,7 +259,7 @@ public class InterProcessSemaphoreV2
      * <p>The client must close the leases when it is done with them. You should do this in a
      * <code>finally</code> block. NOTE: You can use {@link #returnAll(Collection)} for this.</p>
      *
-     * @param qty  number of leases to acquire
+     * @param qty  number of leases to acquire 需要获取的资源数
      * @param time time to wait
      * @param unit time unit
      * @return the new leases or null if time ran out
@@ -266,6 +269,7 @@ public class InterProcessSemaphoreV2
     {
         long startMs = System.currentTimeMillis();
         boolean hasWait = (unit != null);
+        // 需要等待的时间
         long waitMs = hasWait ? TimeUnit.MILLISECONDS.convert(time, unit) : 0;
 
         Preconditions.checkArgument(qty > 0, "qty cannot be 0");
@@ -274,30 +278,36 @@ public class InterProcessSemaphoreV2
         boolean success = false;
         try
         {
+            // 需要获取的资源数-1，然后获取资源
             while ( qty-- > 0 )
             {
                 int retryCount = 0;
                 long startMillis = System.currentTimeMillis();
                 boolean isDone = false;
+                // 重试循环
                 while ( !isDone )
                 {
+                    // 进行获取资源
+                    // 下面是针对操作结果的执行
                     switch ( internalAcquire1Lease(builder, startMs, hasWait, waitMs) )
                     {
+                        // 成功，跳出获取当前资源的循环，进行获取下个资源的
                         case CONTINUE:
                         {
                             isDone = true;
                             break;
                         }
-
+                        // 连接失败，直接返回null
                         case RETURN_NULL:
                         {
                             return null;
                         }
-
+                        // 当前资源获取失败重试
                         case RETRY_DUE_TO_MISSING_NODE:
                         {
                             // gets thrown by internalAcquire1Lease when it can't find the lock node
                             // this can happen when the session expires, etc. So, if the retry allows, just try it all again
+                            // 重试策略判断
                             if ( !client.getZookeeperClient().getRetryPolicy().allowRetry(retryCount++, System.currentTimeMillis() - startMillis, RetryLoop.getDefaultRetrySleeper()) )
                             {
                                 throw new KeeperException.NoNodeException("Sequential path not found - possible session loss");
@@ -332,13 +342,27 @@ public class InterProcessSemaphoreV2
     static volatile CountDownLatch debugFailedGetChildrenLatch = null;
     volatile CountDownLatch debugWaitLatch = null;
 
+    /**
+     * Semaphore中获取1ge资源
+     * @param builder
+     * @param startMs
+     * @param hasWait
+     * @param waitMs
+     * @return
+     * @throws Exception
+     */
     private InternalAcquireResult internalAcquire1Lease(ImmutableList.Builder<Lease> builder, long startMs, boolean hasWait, long waitMs) throws Exception
     {
+        // 连接关闭等外部情况
         if ( client.getState() != CuratorFrameworkState.STARTED )
         {
             return InternalAcquireResult.RETURN_NULL;
         }
 
+        /**
+         * 可以看到其实还是使用单个InterProcessMutex来进行获取
+         */
+        // 有等待时间获取
         if ( hasWait )
         {
             long thisWaitMs = getThisWaitMs(startMs, waitMs);
@@ -347,6 +371,7 @@ public class InterProcessSemaphoreV2
                 return InternalAcquireResult.RETURN_NULL;
             }
         }
+        // 无等待时间获取
         else
         {
             lock.acquire();
@@ -358,10 +383,13 @@ public class InterProcessSemaphoreV2
         try
         {
             PathAndBytesable<String> createBuilder = client.create().creatingParentContainersIfNeeded().withProtection().withMode(CreateMode.EPHEMERAL_SEQUENTIAL);
+            // 前缀：path/leases/lease-,如/semaphore1/leases/lease-
+            // 创建lease节点，临时顺序节点,/semaphore1/leases/lease-0000
             String path = (nodeData != null) ? createBuilder.forPath(ZKPaths.makePath(leasesPath, LEASE_BASE_NAME), nodeData) : createBuilder.forPath(ZKPaths.makePath(leasesPath, LEASE_BASE_NAME));
             String nodeName = ZKPaths.getNodeFromPath(path);
             lease = makeLease(path);
 
+            // dedbug使用，忽略
             if ( debugAcquireLatch != null )
             {
                 debugAcquireLatch.await();
@@ -376,6 +404,8 @@ public class InterProcessSemaphoreV2
                         List<String> children;
                         try
                         {
+                            // 对leases目录(path/leases)下的所有节点添加watcher
+                            // 向所有path/leases/lease-加watcher
                             children = client.getChildren().usingWatcher(watcher).forPath(leasesPath);
                         }
                         catch ( Exception e )
@@ -391,11 +421,14 @@ public class InterProcessSemaphoreV2
                             log.error("Sequential path not found: " + path);
                             return InternalAcquireResult.RETRY_DUE_TO_MISSING_NODE;
                         }
-
+                        // lease节点数量 <= maxLeases，获取成功，退出循环
                         if ( children.size() <= maxLeases )
                         {
                             break;
                         }
+                        /**
+                         * 获取资源失败，挂起，等待唤醒重试
+                         */
                         if ( hasWait )
                         {
                             long thisWaitMs = getThisWaitMs(startMs, waitMs);
@@ -423,6 +456,7 @@ public class InterProcessSemaphoreV2
             }
             finally
             {
+                // 获取资源不成功，把所有lease的关闭
                 if ( !success )
                 {
                     returnLease(lease);
@@ -432,8 +466,24 @@ public class InterProcessSemaphoreV2
         }
         finally
         {
+            /**
+             * 注意，获取到资源成功后，会释放lock
+             * 获取失败，也释放lock
+             */
             lock.release();
         }
+        /**
+         * 可以理解过程为：
+         * 1. 先获取独占锁（/locks/lock-000X）
+         * 2. 获取成功后，进行lease资源操作，先新增lease节点（/leases/lease-000X）
+         * 3. 判断加后lease节点数量是否 <= maxLeases(最大可获取的资源数)
+         *    符合就获取资源成功，
+         *    不符合获取资源失败：对所有lease节点加watcher，挂起等待，等待有lease释放，watcher监听到把线程唤醒
+         * 4. 把lock锁释放（节点删除）
+         * 思路就是：
+         * 通过独占锁，使得只有一个线程可以进行lease相关操作。
+         * lease的操作，先加lease节点，然后当前lease节点是否不超过需求的总数量，不超过就是成功，超过就挂起，通过watcher等待节点减少，唤醒
+         */
         builder.add(Preconditions.checkNotNull(lease));
         return InternalAcquireResult.CONTINUE;
     }
