@@ -99,7 +99,10 @@ public class CrudExamples
     public static void      setDataAsyncWithCallback(CuratorFramework client, BackgroundCallback callback, String path, byte[] payload) throws Exception
     {
         // this is another method of getting notification of an async completion
-        client.setData().inBackground(callback).forPath(path, payload);
+        client.setData().inBackground((curatorFramework, curatorEvent) -> {
+            // 执行成功后回调操作
+
+        }).forPath(path, payload);
     }
 
     public static void      setDataIdempotent(CuratorFramework client, String path, byte[] payload, int currentVersion) throws Exception

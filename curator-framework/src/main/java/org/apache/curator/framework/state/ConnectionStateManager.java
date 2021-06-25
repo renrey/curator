@@ -129,6 +129,7 @@ public class ConnectionStateManager implements Closeable
                     @Override
                     public Object call() throws Exception
                     {
+                        // 监听连接变化，调用ConnectionStateListener回调
                         processEvents();
                         return null;
                     }
@@ -258,8 +259,12 @@ public class ConnectionStateManager implements Closeable
         }
     }
 
+    /**
+     * 监听连接变化，调用ConnectionStateListener回调
+     */
     private void processEvents()
     {
+        // 连接一直是开启中，就会一直执行
         while ( state.get() == State.STARTED )
         {
             try
@@ -267,7 +272,9 @@ public class ConnectionStateManager implements Closeable
                 int useSessionTimeoutMs = getUseSessionTimeoutMs();
                 long elapsedMs = startOfSuspendedEpoch == 0 ? useSessionTimeoutMs / 2 : System.currentTimeMillis() - startOfSuspendedEpoch;
                 long pollMaxMs = useSessionTimeoutMs - elapsedMs;
-
+                // 从eventQueue获取数据ConnectionState
+                // 其他就是client默认创建了watcher回调中，会加入ConnectionState,
+                // 一般是这个watcher监听到变化，就会加入一个
                 final ConnectionState newState = eventQueue.poll(pollMaxMs, TimeUnit.MILLISECONDS);
                 if ( newState != null )
                 {
@@ -275,7 +282,7 @@ public class ConnectionStateManager implements Closeable
                     {
                         log.warn("There are no ConnectionStateListeners registered.");
                     }
-
+                    // 执行所有ConnectionStateListener
                     listeners.forEach(listener -> listener.stateChanged(client, newState));
                 }
                 else if ( sessionExpirationPercent > 0 )

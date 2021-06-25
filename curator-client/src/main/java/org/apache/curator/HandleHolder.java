@@ -81,6 +81,7 @@ class HandleHolder
 
     void closeAndReset() throws Exception
     {
+        // 关闭zk
         internalClose(0);
 
         Helper.Data data = new Helper.Data();   // data shared between initial Helper and the un-synchronized Helper

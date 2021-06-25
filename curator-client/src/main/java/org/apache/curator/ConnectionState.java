@@ -59,11 +59,13 @@ class ConnectionState implements Watcher, Closeable
     {
         this.ensembleProvider = ensembleProvider;
         this.tracer = tracer;
+        // 往parentWatchers队列加入watcher
         if ( parentWatcher != null )
         {
             parentWatchers.offer(parentWatcher);
         }
 
+        // zk client 的配置加入watcher
         handleHolder = new HandleHolder(zookeeperFactory, this, ensembleProvider, sessionTimeoutMs, canBeReadOnly);
     }
 
@@ -86,7 +88,7 @@ class ConnectionState implements Watcher, Closeable
         {
             checkNewConnectionString();
         }
-
+        // 重新创建zk连接
         return handleHolder.getZooKeeper();
     }
 
@@ -98,7 +100,9 @@ class ConnectionState implements Watcher, Closeable
     void start() throws Exception
     {
         log.debug("Starting");
+        // 扩展点无操作
         ensembleProvider.start();
+        // 启动逻辑！！！连接zk，创建zk客户端
         reset();
     }
 
@@ -191,7 +195,9 @@ class ConnectionState implements Watcher, Closeable
 
         isConnected.set(false);
         connectionStartMs = System.currentTimeMillis();
+        // 关闭原有zk client, 构建一个helper，里面定义了zk客户端的创建（通过zk工厂）
         handleHolder.closeAndReset();
+        // 创建zk客户端，初始化连接
         handleHolder.getZooKeeper();   // initiate connection
     }
 

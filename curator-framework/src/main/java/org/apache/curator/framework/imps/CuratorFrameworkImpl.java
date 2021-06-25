@@ -108,6 +108,7 @@ public class CuratorFrameworkImpl implements CuratorFramework
 
     public CuratorFrameworkImpl(CuratorFrameworkFactory.Builder builder)
     {
+        // 默认这个工厂就是ZooKeeperAdmin
         ZookeeperFactory localZookeeperFactory = makeZookeeperFactory(builder.getZookeeperFactory());
         this.client = new CuratorZookeeperClient
             (
@@ -116,12 +117,18 @@ public class CuratorFrameworkImpl implements CuratorFramework
                 builder.getSessionTimeoutMs(),
                 builder.getConnectionTimeoutMs(),
                 builder.getWaitForShutdownTimeoutMs(),
+                // 默认添加一个zk的watcher
                 new Watcher()
                 {
                     @Override
                     public void process(WatchedEvent watchedEvent)
                     {
+                        // 监听后，包装成Curator的事件对象CuratorEvent
                         CuratorEvent event = new CuratorEventImpl(CuratorFrameworkImpl.this, CuratorEventType.WATCHED, watchedEvent.getState().getIntValue(), unfixForNamespace(watchedEvent.getPath()), null, null, null, null, null, watchedEvent, null, null);
+                        /**
+                         * 1. 连接变化处理
+                         * 2. 执行所有listener回调
+                         */
                         processEvent(event);
                     }
                 },
@@ -299,6 +306,11 @@ public class CuratorFrameworkImpl implements CuratorFramework
     }
 
     @Override
+    /**
+     * 1. 开启监听连接变化线程
+     * 2. 初始化zk连接，创建zk原生客户端
+     * 3.
+     */
     public void start()
     {
         log.info("Starting");
@@ -309,8 +321,11 @@ public class CuratorFrameworkImpl implements CuratorFramework
 
         try
         {
+            // 1. 开启监听连接变化的线程，用于调用ConnectionStateListener回调 ，
+            // （一般就是watcher接收到通知后，往connectionStateManager的eventQueue堵塞队列入队，这个线程会一直从这个queue获取元素）
             connectionStateManager.start(); // ordering dependency - must be called before client.start()
 
+            // 添加一个ConnectionStateListener连接监听器
             final ConnectionStateListener listener = new ConnectionStateListener()
             {
                 @Override
@@ -331,6 +346,10 @@ public class CuratorFrameworkImpl implements CuratorFramework
 
             this.getConnectionStateListenable().addListener(listener);
 
+            // CuratorZookeeperClient 启动
+            /**
+             * 2. 创建zk原生客户端，与zk初始化连接
+             */
             client.start();
 
             executorService = Executors.newSingleThreadScheduledExecutor(threadFactory);
@@ -736,20 +755,22 @@ public class CuratorFrameworkImpl implements CuratorFramework
 
     void validateConnection(Watcher.Event.KeeperState state)
     {
-        if ( state == Watcher.Event.KeeperState.Disconnected )
-        {
+        if ( state == Watcher.Event.KeeperState.Disconnected ) {
             internalConnectionHandler.suspendConnection(this);
         }
+        // session已过期
         else if ( state == Watcher.Event.KeeperState.Expired )
         {
             connectionStateManager.addStateChange(ConnectionState.LOST);
         }
+        // 正常连接
         else if ( state == Watcher.Event.KeeperState.SyncConnected )
         {
             internalConnectionHandler.checkNewConnection(this);
             connectionStateManager.addStateChange(ConnectionState.RECONNECTED);
             unSleepBackgroundOperations();
         }
+        // 只读的连接
         else if ( state == Watcher.Event.KeeperState.ConnectedReadOnly )
         {
             internalConnectionHandler.checkNewConnection(this);
@@ -1041,11 +1062,14 @@ public class CuratorFrameworkImpl implements CuratorFramework
 
     private void processEvent(final CuratorEvent curatorEvent)
     {
+        // 一般都是WATCHED
         if ( curatorEvent.getType() == CuratorEventType.WATCHED )
         {
+            // 校验连接变化
+            // 一般会往connectionStateManager 的eventQueue加入ConnectionState
             validateConnection(curatorEvent.getWatchedEvent().getState());
         }
-
+        // 调用所有CuratorListener的回调eventReceived
         listeners.forEach(listener ->
         {
             try

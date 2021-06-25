@@ -295,10 +295,12 @@ public class GetDataBuilderImpl implements GetDataBuilder, BackgroundOperation<S
         path = client.fixForNamespace(path);
 
         byte[]      responseData = null;
+        // 异步执行
         if ( backgrounding.inBackground() )
         {
             client.processBackgroundOperation(new OperationAndData<String>(this, path, backgrounding.getCallback(), null, backgrounding.getContext(), watching), null);
         }
+        // 同步执行
         else
         {
             responseData = pathInForeground(path);
@@ -309,9 +311,12 @@ public class GetDataBuilderImpl implements GetDataBuilder, BackgroundOperation<S
     private byte[] pathInForeground(final String path) throws Exception
     {
         OperationTrace   trace = client.getZookeeperClient().startAdvancedTracer("GetDataBuilderImpl-Foreground");
+        // 执行获取数据
+        // 根据设置的重试策略，可以错误重试
         byte[]      responseData = RetryLoop.callWithRetry
         (
             client.getZookeeperClient(),
+            // 执行逻辑
             new Callable<byte[]>()
             {
                 @Override

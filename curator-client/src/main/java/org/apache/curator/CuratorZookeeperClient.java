@@ -124,6 +124,7 @@ public class CuratorZookeeperClient implements Closeable
 
         this.connectionTimeoutMs = connectionTimeoutMs;
         this.waitForShutdownTimeoutMs = waitForShutdownTimeoutMs;
+        // 保存连接相关配置
         state = new ConnectionState(zookeeperFactory, ensembleProvider, sessionTimeoutMs, watcher, tracer, canBeReadOnly);
         setRetryPolicy(retryPolicy);
     }
@@ -211,6 +212,7 @@ public class CuratorZookeeperClient implements Closeable
             throw new IllegalStateException("Already started");
         }
 
+        // ConnectionState
         state.start();
     }
     
